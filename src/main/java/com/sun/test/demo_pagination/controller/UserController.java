@@ -3,6 +3,7 @@ import com.sun.test.demo_pagination.model.User;
 import com.sun.test.demo_pagination.model.dto.MemberDTO;
 import com.sun.test.demo_pagination.repository.UserRepository;
 import com.sun.test.demo_pagination.service.UserService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1/users")
 // TAG-CASE#5: Required to prevent CORS errors from http://localhost:3000
@@ -49,6 +51,18 @@ public class UserController {
         // Return 201 Created status
         return new ResponseEntity<>(savedUser, HttpStatus.CREATED);
     }
+    @GetMapping("/{userId}")
+    public User getUsers(@PathVariable(value = "userId") Long userId){
+        log.info("User Id - selected to view : {}",userId);
+        User userInfo = new User();
+        userInfo.setId(1L);
+        userInfo.setName("TestUser");
+        userInfo.setRole("Admin");
+        userInfo.setStatus("Active");
+        userInfo.setCreatedAt(LocalDateTime.now());
+        userInfo.setEmail("Test@test.com");
+        return userInfo;
+}
     @GetMapping
     public Page<User> getUsers(
             @RequestParam(defaultValue = "0") int page,
