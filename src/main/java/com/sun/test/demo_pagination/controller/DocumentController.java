@@ -1,5 +1,8 @@
 package com.sun.test.demo_pagination.controller;
 
+import com.sun.test.demo_pagination.model.dto.DocumentUpdateDTO;
+import com.sun.test.demo_pagination.repository.DocumentRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.http.HttpHeaders;
@@ -23,11 +26,19 @@ import org.springframework.util.StringUtils;
 import java.time.format.DateTimeFormatter;
 import java.nio.file.*;
 
+import org.springframework.beans.factory.annotation.Autowired;
 
+@Slf4j
 @RestController
-@RequestMapping("/api/docs")
-@CrossOrigin(origins = "http://localhost:3000") // Your React App URL
+@RequestMapping("/api/v1/docs")
+//@CrossOrigin(origins = "http://localhost:3000") // Your React App URL
+@CrossOrigin(origins = "http://localhost:3000",
+        allowedHeaders = "*", methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT,
+        RequestMethod.OPTIONS, RequestMethod.DELETE, RequestMethod.HEAD, RequestMethod.TRACE})
 public class DocumentController {
+
+    @Autowired
+    private DocumentRepository documentRepository;
 
     private final Path rootLocation = Paths.get("C:/sn/work-docs/uploads");
 
@@ -52,15 +63,39 @@ public class DocumentController {
         }
     }
 
+    // TASK#290426A1157.4: Binary Download for External Editing
+    // Improvement: Explicit attachment header for binary integrity
+    @GetMapping("/download/{filename:.+}")
+    public ResponseEntity<Resource> downloadDocument(@PathVariable String filename) {
+        try {
+            log.info("Requested Filename : {}",filename);
+            Path file = rootLocation.resolve(filename).normalize();
+            Resource resource = new UrlResource(file.toUri());
 
 
-// ... within DocumentController class ...
+            System.out.println("DEBUG: Attempting to read file from: " + file.toAbsolutePath());
+
+
+            if (!resource.exists() || !resource.isReadable()) {
+                return ResponseEntity.notFound().build();
+            }
+
+            String contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
+                    .body(resource);
+
+        } catch (MalformedURLException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
 
     @PostMapping("/save")
     public ResponseEntity<String> saveDocx(@RequestParam("file") MultipartFile file,
                                            @RequestParam("filename") String filename) {
         try {
-            // Validate it's actually a .docx
             if (!filename.toLowerCase().endsWith(".docx")) {
                 return ResponseEntity.badRequest().body("Only .docx files are supported.");
             }
@@ -70,24 +105,20 @@ public class DocumentController {
 
             // 1. VERSION CONTROL: Move existing to history before overwrite
             if (Files.exists(currentFile)) {
-                // Create subfolder for this specific file in history
                 Path historyDir = this.rootLocation.resolve("history").resolve(cleanName);
                 Files.createDirectories(historyDir);
 
-                // Create timestamped version
                 String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmm_ss"));
                 String versionedName = timestamp + "_" + cleanName;
                 Path archivePath = historyDir.resolve(versionedName);
 
-                // Atomic move to history
                 Files.move(currentFile, archivePath, StandardCopyOption.ATOMIC_MOVE);
             }
 
-            // 2. SAVE NEW VERSION: This becomes the 'Current' file for the React Viewer
+            // 2. SAVE NEW VERSION
             Files.createDirectories(currentFile.getParent());
             Files.copy(file.getInputStream(), currentFile, StandardCopyOption.REPLACE_EXISTING);
 
-            // Reference: TAG-CASE#1 logic applied
             return ResponseEntity.ok("Document updated. Version archived. (TAG-CASE#1 ready)");
 
         } catch (IOException e) {
@@ -96,33 +127,26 @@ public class DocumentController {
         }
     }
 
-
-    // 2. SAVE: Receives the edited file from React and overwrites the existing one
     @PostMapping("/save-any")
     public ResponseEntity<String> saveAnyFile(@RequestParam("file") MultipartFile file,
-                                           @RequestParam("filename") String filename) {
+                                              @RequestParam("filename") String filename) {
         try {
             if (file.isEmpty()) return ResponseEntity.badRequest().body("File is empty");
 
             String cleanName = StringUtils.cleanPath(filename);
             Path currentFile = this.rootLocation.resolve(cleanName).normalize();
 
-            // 1. Version Control Logic
             if (Files.exists(currentFile)) {
-                // Create a 'history' directory
                 Path historyDir = this.rootLocation.resolve("history").resolve(cleanName);
                 Files.createDirectories(historyDir);
 
-                // Generate a versioned filename (e.g., invoice_20260428_1305.docx)
                 String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmm"));
                 String versionedName = timestamp + "_" + cleanName;
                 Path archiveFile = historyDir.resolve(versionedName);
 
-                // Move the existing file to history before overwriting
                 Files.move(currentFile, archiveFile, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            // 2. Save the new version as the 'Primary' file
             Files.createDirectories(currentFile.getParent());
             Files.copy(file.getInputStream(), currentFile, StandardCopyOption.REPLACE_EXISTING);
 
@@ -132,19 +156,22 @@ public class DocumentController {
         }
     }
 
-    //Updated
-    /*
-    @PostMapping("/save")
-    public ResponseEntity<String> saveFile(@RequestParam("file") MultipartFile file,
-                                           @RequestParam("filename") String filename) {
-        try {
-            // Calling service with the required TAG
-            documentService.saveOrUpdateDocument(file, filename, "TAG-CASE#1");
-            return ResponseEntity.ok("File and Metadata saved successfully.");
-        } catch (IOException e) {
-            return ResponseEntity.status(500).body("Error: " + e.getMessage());
-        }
-    }
+    @PutMapping("/{id}/content")
+    public ResponseEntity<?> updateDocumentContent(
+            @PathVariable Long id,
+            @RequestBody DocumentUpdateDTO updateDTO) {
 
-    */
+        return documentRepository.findById(id).map(doc -> {
+            doc.setHtmlContent(updateDTO.getHtml());
+            String currentStatus = doc.getStatus();
+            if ("CREATED".equals(currentStatus) || "INITIATED".equals(currentStatus)) {
+                doc.setStatus("PROGRESS");
+            } else {
+                doc.setStatus(updateDTO.getStatus());
+            }
+            doc.setLastModified(LocalDateTime.now());
+            documentRepository.save(doc);
+            return ResponseEntity.ok().body("Document updated successfully to " + doc.getStatus());
+        }).orElse(ResponseEntity.notFound().build());
+    }
 }

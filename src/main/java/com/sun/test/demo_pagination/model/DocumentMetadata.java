@@ -4,12 +4,17 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.time.LocalDateTime;
 
+import jakarta.persistence.*;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+import java.time.LocalDateTime;
+
 @Entity
-@Table(name = "billing_documents")
-@Getter @Setter
+@Table(name = "document_metadata") // Ensure this matches your DB table name
+@Data // This Lombok annotation generates getStatus(), setStatus(), setHtmlContent(), etc.
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
 public class DocumentMetadata {
 
     @Id
@@ -17,12 +22,17 @@ public class DocumentMetadata {
     private Long id;
 
     private String fileName;
-    private String fileType;
-    private String filePath;
 
-    // To track your specific marking
-    private String tagStatus; // e.g., "TAG-CASE#1"
+    private String status; // Resolves Error #2 (getStatus)
+
+    /**
+     * @Lob is critical here.
+     * Standard VARCHAR usually limits to 255 chars,
+     * but HTML documents can be much larger.
+     */
+    @Lob
+    @Column(columnDefinition = "LONGTEXT")
+    private String htmlContent; // Resolves Error #1 (setHtmlContent)
 
     private LocalDateTime lastModified;
-    private LocalDateTime reminderDate;
 }

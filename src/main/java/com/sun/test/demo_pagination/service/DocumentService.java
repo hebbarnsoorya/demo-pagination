@@ -33,9 +33,9 @@ public class DocumentService {
                 .orElse(new DocumentMetadata());
 
         metadata.setFileName(filename);
-        metadata.setFilePath(destinationFile.toString());
-        metadata.setFileType(file.getContentType());
-        metadata.setTagStatus(tag); // Assigning "TAG-CASE#1"
+        //metadata.setFilePath(destinationFile.toString());
+        //metadata.setFileType(file.getContentType());
+        //metadata.setTagStatus(tag); // Assigning "TAG-CASE#1"
         metadata.setLastModified(LocalDateTime.now());
 
         repository.save(metadata);
