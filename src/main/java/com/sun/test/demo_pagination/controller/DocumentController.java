@@ -13,14 +13,18 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.MalformedURLException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+
+import org.apache.poi.xwpf.usermodel.*;
 
 import org.springframework.util.StringUtils;
 import java.time.format.DateTimeFormatter;
@@ -92,15 +96,20 @@ public class DocumentController {
         }
     }
 
+
     @PostMapping("/save")
     public ResponseEntity<String> saveDocx(@RequestParam("file") MultipartFile file,
                                            @RequestParam("filename") String filename) {
+        if (file.isEmpty() || filename == null || filename.isEmpty()) {
+            return ResponseEntity.badRequest().body("Missing file or filename");
+        }
+
         try {
-            if (!filename.toLowerCase().endsWith(".docx")) {
+            String cleanName = StringUtils.cleanPath(filename);
+            if (!cleanName.toLowerCase().endsWith(".docx")) {
                 return ResponseEntity.badRequest().body("Only .docx files are supported.");
             }
 
-            String cleanName = StringUtils.cleanPath(filename);
             Path currentFile = this.rootLocation.resolve(cleanName).normalize();
 
             // 1. VERSION CONTROL: Move existing to history before overwrite
@@ -110,21 +119,137 @@ public class DocumentController {
 
                 String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmm_ss"));
                 String versionedName = timestamp + "_" + cleanName;
-                Path archivePath = historyDir.resolve(versionedName);
-
-                Files.move(currentFile, archivePath, StandardCopyOption.ATOMIC_MOVE);
+                Files.move(currentFile, historyDir.resolve(versionedName), StandardCopyOption.ATOMIC_MOVE);
             }
 
-            // 2. SAVE NEW VERSION
+            // 2. STRUCTURED CONVERSION: HTML -> DOCX
             Files.createDirectories(currentFile.getParent());
-            Files.copy(file.getInputStream(), currentFile, StandardCopyOption.REPLACE_EXISTING);
 
-            return ResponseEntity.ok("Document updated. Version archived. (TAG-CASE#1 ready)");
+            // Use try-with-resources to ensure the document is closed properly
+            try (XWPFDocument document = new XWPFDocument()) {
+                String htmlContent = new String(file.getBytes(), StandardCharsets.UTF_8);
+
+                // Parse HTML using Jsoup
+                org.jsoup.nodes.Document htmlDoc = org.jsoup.Jsoup.parse(htmlContent);
+
+                // Select block-level elements that should start new lines/paragraphs
+                org.jsoup.select.Elements elements = htmlDoc.select("p, h1, h2, h3, li, div");
+
+                if (elements.isEmpty()) {
+                    // Fallback if the HTML is just a raw string without tags
+                    XWPFParagraph p = document.createParagraph();
+                    p.createRun().setText(htmlDoc.text());
+                } else {
+                    for (org.jsoup.nodes.Element el : elements) {
+                        XWPFParagraph paragraph = document.createParagraph();
+                        XWPFRun run = paragraph.createRun();
+
+                        // Handle Headers
+                        if (el.tagName().startsWith("h")) {
+                            run.setBold(true);
+                            run.setFontSize(el.tagName().equals("h1") ? 16 : 14);
+                            paragraph.setSpacingAfter(200);
+                        }
+
+                        // Handle list items (simple bullet simulation)
+                        if (el.tagName().equals("li")) {
+                            run.setText("• ");
+                        }
+
+                        // Set the text content
+                        run.setText(el.text());
+                    }
+                }
+
+                // Write the actual binary .docx file
+                try (FileOutputStream out = new FileOutputStream(currentFile.toFile())) {
+                    document.write(out);
+                }
+            }
+
+            return ResponseEntity.ok("Document updated. Version archived. (TAG-CASE#1: " + filename + " ready)");
 
         } catch (IOException e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to process document: " + e.getMessage());
+                    .body("File System Error: " + e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Conversion Logic Error: " + e.getMessage());
         }
+    }
+
+    @PostMapping("/savev2")
+    public ResponseEntity<String> saveDocxV2(@RequestParam("file") MultipartFile file,
+                                           @RequestParam("filename") String filename) {
+        try {
+            String cleanName = StringUtils.cleanPath(filename);
+            Path currentFile = this.rootLocation.resolve(cleanName).normalize();
+
+            // ... [Keep your versioning/history logic here] ...
+
+            try (XWPFDocument document = new XWPFDocument()) {
+                String htmlContent = new String(file.getBytes(), StandardCharsets.UTF_8);
+                org.jsoup.nodes.Document htmlDoc = org.jsoup.Jsoup.parse(htmlContent);
+
+                // Select all top-level blocks (p, h1, div)
+                org.jsoup.select.Elements blocks = htmlDoc.select("body > p, body > h1, body > h2, body > div, body > li");
+
+                for (org.jsoup.nodes.Element block : blocks) {
+                    XWPFParagraph paragraph = document.createParagraph();
+
+                    // Handle Alignment (if present in style attribute)
+                    if (block.attr("style").contains("text-align: center")) {
+                        paragraph.setAlignment(ParagraphAlignment.CENTER);
+                    }
+
+                    // Iterate through inner nodes to preserve inline formatting (Bold, Br, Spans)
+                    for (org.jsoup.nodes.Node node : block.childNodes()) {
+                        XWPFRun run = paragraph.createRun();
+
+                        if (node instanceof org.jsoup.nodes.Element) {
+                            org.jsoup.nodes.Element el = (org.jsoup.nodes.Element) node;
+                            String tagName = el.tagName();
+
+                            if (tagName.equals("br")) {
+                                run.addBreak(); // This fixes the "New Line" issue within paragraphs
+                            } else if (tagName.equals("strong") || tagName.equals("b")) {
+                                run.setBold(true);
+                                run.setText(el.text());
+                            } else if (tagName.equals("span")) {
+                                // Example: Handle Color <span style="color: red">
+                                String style = el.attr("style");
+                                if (style.contains("color:")) {
+                                    String hexColor = extractHexColor(style); // Helper method
+                                    if (hexColor != null) run.setColor(hexColor);
+                                }
+                                run.setText(el.text());
+                            } else {
+                                run.setText(el.text());
+                            }
+                        } else if (node instanceof org.jsoup.nodes.TextNode) {
+                            run.setText(((org.jsoup.nodes.TextNode) node).getWholeText());
+                        }
+                    }
+                }
+
+                try (FileOutputStream out = new FileOutputStream(currentFile.toFile())) {
+                    document.write(out);
+                }
+            }
+            return ResponseEntity.ok("TAG-CASE#1: High-fidelity save complete.");
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body("Error: " + e.getMessage());
+        }
+    }
+
+    // Helper to extract color for POI
+    private String extractHexColor(String style) {
+        // Basic logic to find "color: #RRGGBB" and return "RRGGBB"
+        if (style.contains("#")) {
+            int index = style.indexOf("#");
+            return style.substring(index + 1, index + 7);
+        }
+        return null;
     }
 
     @PostMapping("/save-any")
