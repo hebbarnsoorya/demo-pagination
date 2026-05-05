@@ -1,8 +1,10 @@
 package com.sun.test.demo_pagination.controller;
 
+import com.sun.test.demo_pagination.model.dto.DocumentDTO;
 import com.sun.test.demo_pagination.model.dto.DocumentUpdateDTO;
 import com.sun.test.demo_pagination.repository.DocumentRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.http.HttpHeaders;
@@ -29,6 +31,9 @@ import org.apache.poi.xwpf.usermodel.*;
 import org.springframework.util.StringUtils;
 import java.time.format.DateTimeFormatter;
 import java.nio.file.*;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Set;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -246,5 +251,58 @@ public class DocumentController {
         } catch (IOException e) {
             return ResponseEntity.status(500).body("Upload failed: " + e.getMessage());
         }
+    }
+
+
+    // 1. READ: Fetches the file for the React Viewer
+    @GetMapping("/data")
+    public ResponseEntity<Set<DocumentDTO>> fetchDocuments() {
+        Set<DocumentDTO> files = getDocumentDTOS();
+        return ResponseEntity.ok(files);
+    }
+
+    private static @NonNull Set<DocumentDTO> getDocumentDTOS() {
+        Set<DocumentDTO> files = new HashSet<>();
+        files.add(new DocumentDTO(
+                1L,
+                "Technical-Spec-Alpha.docx",
+                "PROGRESS",
+                "<h2>Technical Specification</h2><p>Initial draft for Alpha project.</p>",
+                LocalDateTime.now()
+                ));
+        files.add(new DocumentDTO(
+                2L,
+                "Product-Manual-v1.docx",
+                "CREATED",
+                "<h2>Product Manual</h2><p>Initial draft for Alpha project.</p>",
+                LocalDateTime.now()
+        ));
+
+        files.add(new DocumentDTO(
+                3L,
+                "Tax-Collections-v1.docx",
+                "REVIEW",
+                "<h1>Product Management 2026</h1><p>Finalized and locked content.</p>",
+                LocalDateTime.now()
+        ));
+
+
+        files.add(new DocumentDTO(
+                4L,
+                "Product-Management-v1.docx",
+                "APPROVED",
+                "<h2>Product Manual</h2><p>Initial draft for Alpha project.</p>",
+                LocalDateTime.now()
+        ));
+
+
+        files.add(new DocumentDTO(
+                5L,
+                "Product-Catalog-2026.docx",
+                "REVIEW",
+                "<h1>Catalog 2026</h1><p>Finalized and locked content.</p>",
+                LocalDateTime.now()
+        ));
+        return files;
     }
 }
