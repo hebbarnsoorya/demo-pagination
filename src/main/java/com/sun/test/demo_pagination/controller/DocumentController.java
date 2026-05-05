@@ -217,4 +217,34 @@ public class DocumentController {
             return ResponseEntity.ok().body("Document updated successfully to " + doc.getStatus());
         }).orElse(ResponseEntity.notFound().build());
     }
+
+
+    @PostMapping("/manual-upload")
+    public ResponseEntity<String> manualUpload(@RequestParam("file") MultipartFile file,
+                                               @RequestParam("filename") String filename) {
+        if (file.isEmpty() || filename == null) {
+            return ResponseEntity.badRequest().body("No file uploaded.");
+        }
+
+        try {
+            String cleanName = StringUtils.cleanPath(filename);
+            Path currentFile = this.rootLocation.resolve(cleanName).normalize();
+
+            // 1. VERSION CONTROL: Move current to history
+            if (Files.exists(currentFile)) {
+                Path historyDir = this.rootLocation.resolve("history").resolve(cleanName);
+                Files.createDirectories(historyDir);
+                String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmm_ss"));
+                Files.move(currentFile, historyDir.resolve(timestamp + "_" + cleanName), StandardCopyOption.ATOMIC_MOVE);
+            }
+
+            // 2. SAVE THE NEW BLOB (Direct copy, no HTML conversion needed)
+            Files.createDirectories(currentFile.getParent());
+            Files.copy(file.getInputStream(), currentFile, StandardCopyOption.REPLACE_EXISTING);
+
+            return ResponseEntity.ok("Manual version synchronized successfully.");
+        } catch (IOException e) {
+            return ResponseEntity.status(500).body("Upload failed: " + e.getMessage());
+        }
+    }
 }
