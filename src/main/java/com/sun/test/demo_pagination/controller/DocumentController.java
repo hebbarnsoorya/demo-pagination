@@ -1,6 +1,7 @@
 package com.sun.test.demo_pagination.controller;
 
-import com.sun.test.demo_pagination.model.dto.DocumentDTO;
+import com.sun.test.demo_pagination.model.DocumentMetadata;
+import com.sun.test.demo_pagination.model.dto.DocumentMetadataDTO;
 import com.sun.test.demo_pagination.model.dto.DocumentUpdateDTO;
 import com.sun.test.demo_pagination.repository.DocumentRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -28,12 +29,7 @@ import java.time.format.DateTimeFormatter;
 
 import org.apache.poi.xwpf.usermodel.*;
 
-import org.springframework.util.StringUtils;
-import java.time.format.DateTimeFormatter;
-import java.nio.file.*;
-import java.util.Date;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -256,21 +252,22 @@ public class DocumentController {
 
     // 1. READ: Fetches the file for the React Viewer
     @GetMapping("/data")
-    public ResponseEntity<Set<DocumentDTO>> fetchDocuments() {
-        Set<DocumentDTO> files = getDocumentDTOS();
+    public ResponseEntity<List<DocumentMetadata>> fetchDocuments() {
+        //List<DocumentMetadataDTO> files = getDocumentDTOS();
+        List<DocumentMetadata> files  = documentRepository.findAll();
         return ResponseEntity.ok(files);
     }
 
-    private static @NonNull Set<DocumentDTO> getDocumentDTOS() {
-        Set<DocumentDTO> files = new HashSet<>();
-        files.add(new DocumentDTO(
+    private static @NonNull List<DocumentMetadataDTO> getDocumentDTOS() {
+        List<DocumentMetadataDTO> files = new ArrayList<>();
+        files.add(new DocumentMetadataDTO(
                 1L,
                 "Technical-Spec-Alpha.docx",
                 "PROGRESS",
                 "<h2>Technical Specification</h2><p>Initial draft for Alpha project.</p>",
                 LocalDateTime.now()
                 ));
-        files.add(new DocumentDTO(
+        files.add(new DocumentMetadataDTO(
                 2L,
                 "Product-Manual-v1.docx",
                 "CREATED",
@@ -278,7 +275,7 @@ public class DocumentController {
                 LocalDateTime.now()
         ));
 
-        files.add(new DocumentDTO(
+        files.add(new DocumentMetadataDTO(
                 3L,
                 "Tax-Collections-v1.docx",
                 "REVIEW",
@@ -287,7 +284,7 @@ public class DocumentController {
         ));
 
 
-        files.add(new DocumentDTO(
+        files.add(new DocumentMetadataDTO(
                 4L,
                 "Product-Management-v1.docx",
                 "APPROVED",
@@ -296,7 +293,7 @@ public class DocumentController {
         ));
 
 
-        files.add(new DocumentDTO(
+        files.add(new DocumentMetadataDTO(
                 5L,
                 "Product-Catalog-2026.docx",
                 "REVIEW",
@@ -304,5 +301,85 @@ public class DocumentController {
                 LocalDateTime.now()
         ));
         return files;
+    }
+
+    @PostMapping("/create")
+    public ResponseEntity<DocumentMetadata> createDocument(@RequestBody DocumentMetadata meta) {
+        try {
+
+            // Server-side enforcement
+            // 1. Ensure extension
+            if (!meta.getFileName().toLowerCase().endsWith(".docx")) {
+                meta.setFileName(meta.getFileName() + ".docx");
+            }
+
+            // 2. Check for duplicates to prevent overwriting existing work
+            Optional<DocumentMetadata> existing = documentRepository.findByFileName(meta.getFileName());
+            if (existing.isPresent()) {
+                //return ResponseEntity.status(409).body("File descriptor already exists in the registry.");
+                return ResponseEntity.status(409).body(new DocumentMetadata());
+            }
+
+            // 1. Sync with Database
+            meta.setLastModified(LocalDateTime.now());
+            DocumentMetadata savedMeta = documentRepository.save(meta);
+
+            // 2. Sync with File System (Create the physical .docx)
+            Path filePath = this.rootLocation.resolve(meta.getFileName()).normalize();
+            Files.createDirectories(filePath.getParent());
+
+            try (XWPFDocument document = new XWPFDocument()) {
+                XWPFParagraph p = document.createParagraph();
+                XWPFRun run = p.createRun();
+
+                // If user provided initial HTML, we use the Jsoup logic from earlier
+                String content = (meta.getHtmlContent() != null) ? meta.getHtmlContent() : "New Document Initialized";
+                run.setText(org.jsoup.Jsoup.parse(content).text());
+
+                try (FileOutputStream out = new FileOutputStream(filePath.toFile())) {
+                    document.write(out);
+                }
+            }
+
+            return ResponseEntity.ok(savedMeta);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).build();
+        }
+    }
+
+    @GetMapping("/all")
+    public List<DocumentMetadata> getAllFromDb() {
+        return documentRepository.findAll(); // Now fetching from DB instead of just scanning the folder
+    }
+
+    @PostMapping("/{id}/delete")
+    public ResponseEntity<String> softDeleteDocument(@PathVariable Long id) {
+        return documentRepository.findById(id).map(meta -> {
+            try {
+                // 1. PHYSICAL MOVE: From uploads to uploads/deleted
+                Path sourcePath = this.rootLocation.resolve(meta.getFileName()).normalize();
+                Path deletedDir = this.rootLocation.resolve("deleted");
+
+                if (!Files.exists(deletedDir)) {
+                    Files.createDirectories(deletedDir);
+                }
+
+                if (Files.exists(sourcePath)) {
+                    // Add timestamp to prevent name collisions in the deleted folder
+                    String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmm_ss_"));
+                    Path targetPath = deletedDir.resolve(timestamp + meta.getFileName());
+                    Files.move(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                }
+
+                // 2. DB UPDATE: Set status to DELETED
+                meta.setStatus("DELETED");
+                meta.setLastModified(LocalDateTime.now());
+                documentRepository.save(meta);
+
+                return ResponseEntity.ok("Document soft-deleted and moved to quarantine.");
+            } catch (IOException e) {
+                return ResponseEntity.status(500).body("File system error: " + e.getMessage());
+            }
+        }).orElse(ResponseEntity.notFound().build());
     }
 }

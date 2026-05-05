@@ -34,5 +34,5 @@ public class DocumentMetadata {
     @Column(columnDefinition = "LONGTEXT")
     private String htmlContent; // Resolves Error #1 (setHtmlContent)
 
-    private LocalDateTime lastModified;
+    private LocalDateTime lastModified = LocalDateTime.now();
 }
