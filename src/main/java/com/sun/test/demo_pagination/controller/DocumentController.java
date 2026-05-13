@@ -77,9 +77,7 @@ public class DocumentController {
             Path file = rootLocation.resolve(filename).normalize();
             Resource resource = new UrlResource(file.toUri());
 
-
             System.out.println("DEBUG: Attempting to read file from: " + file.toAbsolutePath());
-
 
             if (!resource.exists() || !resource.isReadable()) {
                 return ResponseEntity.notFound().build();
